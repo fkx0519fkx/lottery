@@ -85,7 +85,7 @@
   /* 结果封存中 */
   .sealed { text-align: center; padding: 24px 10px 18px; }
   .sealed .lock { font-size: 36px; line-height: 1; }
-  .sealed .t { font-size: 21px; font-weight: 800; margin: 10px 0 6px; color: var(--ink); }
+  .sealed .t { font-size: 20px; font-weight: 800; margin: 10px 0 6px; color: var(--ink); line-height: 1.45; letter-spacing: .5px; }
   .sealed .meta { color: var(--sub); font-size: 13px; }
   .progress { height: 8px; background: #f2e9e1; border-radius: 999px; overflow: hidden; margin: 16px auto 6px; max-width: 320px; }
   .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), var(--brand)); transition: width .4s; }
@@ -363,7 +363,7 @@ function renderDraw() {
   $('btn-draw').disabled = prizes.length === 0;
   $('draw-hint').textContent = S.isAdmin
     ? '你是管理员，抽完可立即看到结果'
-    : (S.revealed ? '结果已公布，抽完即可看到自己的奖项' : '抽完不立即显示结果，所有名额抽完后统一公布');
+    : (S.revealed ? '结果已公布，抽完即可看到自己的奖项' : '抽完不立即显示结果，待所有人抽奖完毕后公布');
   const me = S.me;
   if (me && me.drawnAt) {
     $('name').value = me.name;
@@ -379,10 +379,10 @@ function showPending(me) {
   $('draw-result').innerHTML = `
     <div class="sealed">
       <div class="lock">🔒</div>
-      <div class="t">结果已封存</div>
+      <div class="t">待所有人抽奖完毕后公布结果</div>
       <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
       ${progressBar()}
-      <div class="hint">你的奖项已经记下了，但现在不显示——等所有名额抽完后统一公布。<br>到时刷新本页，在「中奖名单」里就能看到全部结果。</div>
+      <div class="hint">你的奖项已经记下了，但现在不显示。<br>到时刷新本页，在「中奖名单」里就能看到全部结果。</div>
     </div>`;
 }
 
@@ -411,7 +411,7 @@ $('btn-draw').onclick = async () => {
     S.me = { name: j.name, prize: j.prize, drawnAt: j.drawnAt, pending: j.pending };
     if (j.pending) {
       showPending(S.me);
-      toast(j.alreadyDrawn ? '你已经抽过了，结果不变' : '抽奖完成，结果已封存');
+      toast(j.alreadyDrawn ? '你已经抽过了，结果不变' : '抽奖完成，待所有人抽奖完毕后公布结果');
     } else {
       showResult(S.me, !j.alreadyDrawn);
       if (j.alreadyDrawn) toast('你已经抽过了，结果不变');
@@ -437,10 +437,10 @@ function renderMine() {
     $('mine-card').innerHTML = `<h2>我的结果</h2>
       <div class="sealed">
         <div class="lock">🔒</div>
-        <div class="t">结果尚未公布</div>
+        <div class="t">待所有人抽奖完毕后公布结果</div>
         <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
         ${progressBar()}
-        <div class="hint">所有名额抽完后自动公布，管理员也可以提前公布。公布后刷新本页即可查看。</div>
+        <div class="hint">管理员也可以提前公布，公布后刷新本页即可看到你的奖项。</div>
       </div>`;
     return;
   }
@@ -459,7 +459,7 @@ function renderBoard() {
     $('board-card').innerHTML = `<h2>🏆 中奖名单</h2>
       <div class="sealed">
         <div class="lock">🔒</div>
-        <div class="t">结果还没公布</div>
+        <div class="t">待所有人抽奖完毕后公布结果</div>
         ${progressBar()}
         <div class="hint">所有名额抽完后会自动公布；管理员也可以随时手动公布。公布后这里会显示全部中奖名单。</div>
       </div>`;
@@ -539,7 +539,7 @@ function renderReveal() {
     <p class="muted">当前状态：<span class="badge ${revealed ? 'yes' : 'no'}">${revealed ? '已公布' : '未公布'}</span></p>
     <p class="muted" style="margin-top:8px">${revealed
       ? '同事现在可以在「中奖名单」看到全部中奖结果。'
-      : '同事抽完只会看到「结果已封存」，看不到自己的奖项。'}</p>
+      : '同事抽完只会看到「待所有人抽奖完毕后公布结果」，看不到自己的奖项。'}</p>
     ${progressBar()}
     ${filled && !revealed ? '<p class="muted">名额已抽完，正常情况下会自动公布；如仍是未公布，点下面按钮即可。</p>' : ''}
     <div class="row" style="margin-top:14px">
