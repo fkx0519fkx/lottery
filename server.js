@@ -43,6 +43,8 @@ function normalize(obj) {
   return {
     config: {
       participantToken: (o.config && o.config.participantToken) || newToken(),
+      // 结果是否已公布:公布前参与者看不到自己的奖项,只能看进度
+      revealed: !!(o.config && o.config.revealed),
     },
     prizes: Array.isArray(o.prizes) ? o.prizes.map(p => ({
       id: p.id || crypto.randomBytes(4).toString('hex'),
@@ -191,6 +193,25 @@ function drawOnce(participant) {
   return participant;
 }
 
+// 所有名额都抽完了吗(自动公布的条件)
+function allSlotsFilled() {
+  if (!db.prizes.length) return false;
+  return remainingSlots().length === 0;
+}
+
+// 对外公布用的中奖名单(按中奖时间排序,不含落选者)
+function winnerList() {
+  return db.participants
+    .filter(p => p.prize)
+    .slice()
+    .sort((a, b) => new Date(a.drawnAt || 0) - new Date(b.drawnAt || 0))
+    .map(p => ({
+      name: p.name,
+      prize: { id: p.prize.id, name: p.prize.name },
+      drawnAt: p.drawnAt,
+    }));
+}
+
 /* ---------------------------------- 路由 ---------------------------------- */
 
 async function handleAPI(req, res, url) {
@@ -202,6 +223,9 @@ async function handleAPI(req, res, url) {
   /* ---- GET /api/state:页面状态 ---- */
   if (url.pathname === '/api/state' && req.method === 'GET') {
     const me = (myToken && db.participants.find(p => p.token === myToken)) || null;
+    const revealed = !!db.config.revealed;
+    // 管理员随时可看;参与者只有公布后才能看到奖项和名单
+    const canSee = isAdmin || revealed;
     return sendJSON(res, 200, {
       ok: true,
       isAdmin,
@@ -209,14 +233,23 @@ async function handleAPI(req, res, url) {
       // 内网访问地址:管理员用 localhost 打开时,页面用它拼出同事能打开的链接
       lanUrls: lanIPs().map(ip => `http://${ip}:${ACTIVE_PORT}/`),
       prizes: db.prizes,
+      revealed,
       // 中奖名单只有管理员能看;普通用户只给统计数字
       stats: {
         totalPrizes: db.prizes.reduce((s, p) => s + p.count, 0),
         totalParticipants: db.participants.length,
         totalWinners: db.participants.filter(p => p.prize).length,
+        slotsLeft: remainingSlots().length,
       },
       participants: isAdmin ? db.participants : [],
-      me: me ? { name: me.name, prize: me.prize, drawnAt: me.drawnAt } : null,
+      winners: canSee ? winnerList() : [],
+      me: me ? {
+        name: me.name,
+        drawnAt: me.drawnAt,
+        prize: canSee ? me.prize : null,
+        // 已抽但结果尚未公布
+        pending: !!me.drawnAt && !canSee,
+      } : null,
     });
   }
 
@@ -234,14 +267,19 @@ async function handleAPI(req, res, url) {
     }
     const alreadyDrawn = !!me.drawnAt; // 进来前就抽过 = 重复请求
     drawOnce(me);
+    // 名额刚好抽完 → 自动公布结果
+    if (allSlotsFilled()) db.config.revealed = true;
     await persist();
+    const canSee = isAdmin || !!db.config.revealed;
     res.setHeader('Set-Cookie',
       `${COOKIE_PARTICIPANT}=${encodeURIComponent(me.token)}; Path=/; Max-Age=${COOKIE_MAX_AGE}; SameSite=Lax; HttpOnly`);
     return sendJSON(res, 200, {
       ok: true,
       name: me.name,
-      prize: me.prize,
+      prize: canSee ? me.prize : null,
       drawnAt: me.drawnAt,
+      revealed: !!db.config.revealed,
+      pending: !canSee,
       alreadyDrawn,
     });
   }
@@ -287,8 +325,16 @@ async function handleAPI(req, res, url) {
     return sendJSON(res, 200, { ok: true, participantToken: db.config.participantToken });
   }
 
+  if (url.pathname === '/api/admin/reveal' && req.method === 'POST') {
+    const body = await readBody(req);
+    db.config.revealed = body.revealed !== false;
+    await persist();
+    return sendJSON(res, 200, { ok: true, revealed: db.config.revealed });
+  }
+
   if (url.pathname === '/api/admin/reset' && req.method === 'POST') {
     db.participants = [];
+    db.config.revealed = false; // 新的一轮,重新保密
     await persist();
     return sendJSON(res, 200, { ok: true });
   }
