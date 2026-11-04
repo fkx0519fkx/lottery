@@ -1,0 +1,16 @@
+{
+  "name": "lottery",
+  "version": "2.0.0",
+  "private": true,
+  "description": "抽奖系统:纯 Node 标准库,本地零依赖",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "optionalDependencies": {
+    "pg": "^8.11.0"
+  }
+}
