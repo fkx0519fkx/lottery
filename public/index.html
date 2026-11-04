@@ -82,6 +82,18 @@
   .result .meta { color: var(--sub); font-size: 13px; }
   .result .again { margin-top: 14px; }
 
+  /* 结果封存中 */
+  .sealed { text-align: center; padding: 24px 10px 18px; }
+  .sealed .lock { font-size: 36px; line-height: 1; }
+  .sealed .t { font-size: 21px; font-weight: 800; margin: 10px 0 6px; color: var(--ink); }
+  .sealed .meta { color: var(--sub); font-size: 13px; }
+  .progress { height: 8px; background: #f2e9e1; border-radius: 999px; overflow: hidden; margin: 16px auto 6px; max-width: 320px; }
+  .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), var(--brand)); transition: width .4s; }
+  .hint { background: #fbf7f2; border-radius: 12px; padding: 12px 14px; color: var(--sub); font-size: 13px; line-height: 1.7; margin-top: 14px; text-align: left; }
+  .badge { display: inline-block; font-size: 12px; padding: 3px 10px; border-radius: 999px; }
+  .badge.no { background: #fdecea; color: var(--brand); }
+  .badge.yes { background: #e7f6ec; color: var(--ok); }
+
   /* 奖项编辑行 */
   .prow { display: flex; gap: 8px; margin-bottom: 10px; }
   .prow input.name { flex: 3; }
@@ -164,7 +176,7 @@
         <button class="btn ghost" id="btn-add-row" style="flex:1">＋ 加一个奖项</button>
         <button class="btn" id="btn-save-prizes" style="flex:1">保存奖项</button>
       </div>
-      <p class="muted" style="margin-top:10px">保存后立即生效；已经抽完的名额不受影响。</p>
+      <p class="muted" style="margin-top:10px">保存后立即生效；已经抽完的名额不受影响。<br>「公布结果」按钮在「👀 全部结果」页；名额抽完会自动公布。</p>
     </div>
 
     <div class="card">
@@ -183,7 +195,7 @@
         <button class="btn gray small" id="btn-reset">清空全部抽奖记录</button>
         <button class="btn gray small" id="btn-logout">退出管理员</button>
       </div>
-      <p class="muted" style="margin-top:10px">清空后所有人可以重新抽，奖项设置保留。</p>
+      <p class="muted" style="margin-top:10px">清空后所有人可以重新抽，结果会重新保密，奖项设置保留。</p>
     </div>
   </section>
 
@@ -195,6 +207,7 @@
       <input type="text" id="name" placeholder="例如:张三" maxlength="20" autocomplete="off" />
       <div style="height:14px"></div>
       <button class="btn big" id="btn-draw">开 始 抽 奖</button>
+      <p class="muted" id="draw-hint" style="margin-top:12px;text-align:center"></p>
       <div id="draw-result"></div>
     </div>
   </section>
@@ -204,8 +217,14 @@
     <div class="card" id="mine-card"></div>
   </section>
 
+  <!-- 中奖名单(公布后所有人可见) -->
+  <section id="view-board" class="hidden">
+    <div class="card" id="board-card"></div>
+  </section>
+
   <!-- 全部结果(管理员) -->
   <section id="view-all" class="hidden">
+    <div class="card" id="reveal-card"></div>
     <div class="card">
       <h2>总览</h2>
       <div class="stats" id="stats"></div>
@@ -258,7 +277,7 @@ const PARTICIPANT_MODE = new URLSearchParams(location.search).has('p');
 async function refresh() {
   try {
     const j = await api('/api/state');
-    const raw = JSON.stringify([j.isAdmin, j.prizes, j.stats, j.me, j.participants && j.participants.length]);
+    const raw = JSON.stringify([j.isAdmin, j.prizes, j.stats, j.me, j.revealed, j.winners]);
     S = j;
     if (raw !== lastRaw) { lastRaw = raw; render(); }
   } catch (e) {
@@ -285,7 +304,7 @@ function setTab(t) {
 }
 
 function render() {
-  const ALL = ['view-loading', 'view-login', 'view-setup', 'view-draw', 'view-mine', 'view-all', 'view-error'];
+  const ALL = ['view-loading', 'view-login', 'view-setup', 'view-draw', 'view-mine', 'view-board', 'view-all', 'view-error'];
   ALL.forEach(id => $(id).classList.add('hidden'));
   const show = id => $(id).classList.remove('hidden');
 
@@ -306,7 +325,7 @@ function render() {
   // 页签
   const tabs = admin
     ? [['setup', '⚙️ 配置奖项'], ['draw', '🎁 抽奖'], ['all', '👀 全部结果']]
-    : [['draw', '🎁 抽奖'], ['mine', '📮 我的结果']];
+    : [['draw', '🎁 抽奖'], ['mine', '📮 我的结果'], ['board', '🏆 中奖名单']];
   if (!tabs.some(t => t[0] === tab)) tab = tabs[0][0];
   $('tabs').innerHTML = tabs.map(([k, label]) =>
     `<button class="tab ${k === tab ? 'on' : ''}" data-tab="${k}">${label}</button>`).join('');
@@ -315,15 +334,25 @@ function render() {
 
   if (admin) {
     if (tab === 'setup') { show('view-setup'); renderSetup(); }
-    else if (tab === 'all') { show('view-all'); renderAll(); }
+    else if (tab === 'all') { show('view-all'); renderReveal(); renderAll(); }
     else { show('view-draw'); renderDraw(); }
   } else {
     if (tab === 'mine') { show('view-mine'); renderMine(); }
+    else if (tab === 'board') { show('view-board'); renderBoard(); }
     else { show('view-draw'); renderDraw(); }
   }
 }
 
 /* ---------------- 抽奖页 ---------------- */
+function progressBar() {
+  const st = S.stats || {};
+  const total = st.totalPrizes || 0;
+  const done = Math.min(st.totalWinners || 0, total);
+  const pct = total ? Math.round(done / total * 100) : 0;
+  return `<div class="progress"><i style="width:${pct}%"></i></div>
+          <div class="meta" style="text-align:center;font-size:12px;color:var(--sub)">已抽出 ${done} / ${total} 个名额</div>`;
+}
+
 function renderDraw() {
   const prizes = S.prizes || [];
   $('draw-prizes').innerHTML = prizes.length
@@ -332,14 +361,29 @@ function renderDraw() {
     : `<p class="muted" style="margin-bottom:16px">管理员还没有配置奖项，稍等一下再刷新。</p>`;
 
   $('btn-draw').disabled = prizes.length === 0;
+  $('draw-hint').textContent = S.isAdmin
+    ? '你是管理员，抽完可立即看到结果'
+    : (S.revealed ? '结果已公布，抽完即可看到自己的奖项' : '抽完不立即显示结果，所有名额抽完后统一公布');
   const me = S.me;
   if (me && me.drawnAt) {
-    showResult(me, false);
     $('name').value = me.name;
     $('btn-draw').disabled = true;
+    if (me.pending) showPending(me); else showResult(me, false);
   } else {
     $('draw-result').innerHTML = '';
   }
+}
+
+// 结果封存中:抽完但还没公布,不透露任何奖项信息
+function showPending(me) {
+  $('draw-result').innerHTML = `
+    <div class="sealed">
+      <div class="lock">🔒</div>
+      <div class="t">结果已封存</div>
+      <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
+      ${progressBar()}
+      <div class="hint">你的奖项已经记下了，但现在不显示——等所有名额抽完后统一公布。<br>到时刷新本页，在「中奖名单」里就能看到全部结果。</div>
+    </div>`;
 }
 
 function showResult(me, fresh) {
@@ -350,7 +394,10 @@ function showResult(me, fresh) {
       <div class="prize-name ${win ? '' : 'none'}">${win ? esc(me.prize.name) : '谢谢参与'}</div>
       <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
       ${win ? '' : '<p class="muted" style="margin-top:8px">别灰心，下一场好运在等你</p>'}
+      <p class="muted" style="margin-top:10px">${S.isAdmin ? '' : '<a href="#" id="go-board" style="color:var(--brand)">查看完整中奖名单 →</a>'}</p>
     </div>`;
+  const gb = $('go-board');
+  if (gb) gb.onclick = e => { e.preventDefault(); setTab('board'); };
   if (win && fresh) confetti();
 }
 
@@ -361,9 +408,14 @@ $('btn-draw').onclick = async () => {
   btn.disabled = true; btn.textContent = '抽取中…';
   try {
     const j = await api('/api/draw', { name });
-    S.me = { name: j.name, prize: j.prize, drawnAt: j.drawnAt };
-    showResult(S.me, !j.alreadyDrawn);
-    if (j.alreadyDrawn) toast('你已经抽过了，结果不变');
+    S.me = { name: j.name, prize: j.prize, drawnAt: j.drawnAt, pending: j.pending };
+    if (j.pending) {
+      showPending(S.me);
+      toast(j.alreadyDrawn ? '你已经抽过了，结果不变' : '抽奖完成，结果已封存');
+    } else {
+      showResult(S.me, !j.alreadyDrawn);
+      if (j.alreadyDrawn) toast('你已经抽过了，结果不变');
+    }
     refresh();
   } catch (e) {
     toast(e.message);
@@ -377,14 +429,51 @@ $('name').addEventListener('keydown', e => { if (e.key === 'Enter') $('btn-draw'
 /* ---------------- 我的结果页 ---------------- */
 function renderMine() {
   const me = S.me;
-  $('mine-card').innerHTML = !me || !me.drawnAt
-    ? `<h2>我的结果</h2><p class="muted">你还没有抽过。去「抽奖」页输入名字试一试吧。</p>`
-    : `<h2>我的结果</h2>
-       <div class="result">
-         <div class="prize-name ${me.prize ? '' : 'none'}">${me.prize ? esc(me.prize.name) : '谢谢参与'}</div>
-         <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
-       </div>
-       <p class="muted">刷新页面结果不会变，每个人只有一次机会。</p>`;
+  if (!me || !me.drawnAt) {
+    $('mine-card').innerHTML = `<h2>我的结果</h2><p class="muted">你还没有抽过。去「抽奖」页输入名字试一试吧。</p>`;
+    return;
+  }
+  if (me.pending) {
+    $('mine-card').innerHTML = `<h2>我的结果</h2>
+      <div class="sealed">
+        <div class="lock">🔒</div>
+        <div class="t">结果尚未公布</div>
+        <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
+        ${progressBar()}
+        <div class="hint">所有名额抽完后自动公布，管理员也可以提前公布。公布后刷新本页即可查看。</div>
+      </div>`;
+    return;
+  }
+  $('mine-card').innerHTML = `<h2>我的结果</h2>
+    <div class="result">
+      <div class="prize-name ${me.prize ? '' : 'none'}">${me.prize ? esc(me.prize.name) : '谢谢参与'}</div>
+      <div class="meta">${esc(me.name)} · ${new Date(me.drawnAt).toLocaleString('zh-CN')}</div>
+    </div>
+    <p class="muted">刷新页面结果不会变，每个人只有一次机会。</p>`;
+}
+
+/* ---------------- 中奖名单(公布后所有人可见) ---------------- */
+function renderBoard() {
+  const revealed = !!S.revealed;
+  if (!revealed) {
+    $('board-card').innerHTML = `<h2>🏆 中奖名单</h2>
+      <div class="sealed">
+        <div class="lock">🔒</div>
+        <div class="t">结果还没公布</div>
+        ${progressBar()}
+        <div class="hint">所有名额抽完后会自动公布；管理员也可以随时手动公布。公布后这里会显示全部中奖名单。</div>
+      </div>`;
+    return;
+  }
+  const wins = S.winners || [];
+  $('board-card').innerHTML = `<h2>🏆 中奖名单 <span class="badge yes" style="margin-left:6px">已公布</span></h2>` +
+    (wins.length
+      ? `<div style="overflow-x:auto"><table>
+           <tr><th>#</th><th>名字</th><th>奖项</th></tr>
+           ${wins.map((w, i) => `<tr><td>${i + 1}</td><td>${esc(w.name)}</td><td class="win">${esc(w.prize.name)}</td></tr>`).join('')}
+         </table></div>
+         <p class="muted" style="margin-top:12px">共 ${wins.length} 位中奖者。名单由系统随机抽取生成，每人只有一次机会。</p>`
+      : `<p class="muted">本次还没有人中奖。</p>`);
 }
 
 /* ---------------- 管理员:配置页 ---------------- */
@@ -439,6 +528,36 @@ $('btn-logout').onclick = async () => {
   try { await api('/api/admin/logout', {}); } catch (e) {}
   editing = null; tab = 'draw'; refresh();
 };
+
+/* ---------------- 管理员:结果公布控制 ---------------- */
+function renderReveal() {
+  const revealed = !!S.revealed;
+  const st = S.stats || {};
+  const filled = (st.totalPrizes || 0) > 0 && (st.totalWinners || 0) >= (st.totalPrizes || 0);
+  $('reveal-card').innerHTML = `
+    <h2>结果公布</h2>
+    <p class="muted">当前状态：<span class="badge ${revealed ? 'yes' : 'no'}">${revealed ? '已公布' : '未公布'}</span></p>
+    <p class="muted" style="margin-top:8px">${revealed
+      ? '同事现在可以在「中奖名单」看到全部中奖结果。'
+      : '同事抽完只会看到「结果已封存」，看不到自己的奖项。'}</p>
+    ${progressBar()}
+    ${filled && !revealed ? '<p class="muted">名额已抽完，正常情况下会自动公布；如仍是未公布，点下面按钮即可。</p>' : ''}
+    <div class="row" style="margin-top:14px">
+      <button class="btn ${revealed ? 'gray' : ''} small" id="btn-reveal" style="flex:1">
+        ${revealed ? '取消公布（重新保密）' : '立即公布结果'}
+      </button>
+    </div>
+    <p class="muted" style="margin-top:10px">管理员在任何时候都能在下面看到完整名单，与是否公布无关。</p>`;
+  $('btn-reveal').onclick = async () => {
+    const next = !revealed;
+    if (next && !confirm('公布后所有同事都能看到完整中奖名单，确定公布？')) return;
+    try {
+      await api('/api/admin/reveal', { revealed: next });
+      toast(next ? '已公布结果' : '已重新保密');
+      refresh();
+    } catch (e) { toast(e.message); }
+  };
+}
 
 /* ---------------- 管理员:全部结果页 ---------------- */
 function renderAll() {
